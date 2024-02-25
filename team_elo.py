@@ -4,20 +4,22 @@ from math import pow,floor
 # IDEA: LOOK AT HOW FAR OFF THE PREDICTIONS ARE FROM ACTUAL GAME OUTCOMES TO ADJUST
 
 team_records = {}
+team_conferences = {}
 
 # Initial Elo ratings for each team
 INITIAL_RATING = 1500
+CONF_ADV = 39
 
 # K-factor determines how much the Elo ratings change after each match
-K_FACTOR = 10
+K_FACTOR = 31
 
 # Home Team Advantage (elo)
-HT_ADV = 0
+HT_ADV = 2.4
 
 # Weights for different factors
 W_SCORE = 0
 W_XG = 0
-W_SHOTS = 0
+W_SHOTS = 0.041
 W_CORNERS = 0
 W_PK_GOAL = 0
 W_PK_SHOTS = 0
@@ -32,10 +34,9 @@ def expected_score(home_rating, away_rating):
 def update_ratings(home_rating, away_rating, home_result, home_score, away_score, home_xg, away_xg, home_shots, away_shots, home_corners, away_corners, home_pk_goal, away_pk_goal, home_pk_shots, away_pk_shots, home_top):
     home_expected = expected_score(home_rating, away_rating)
     away_expected = expected_score(away_rating, home_rating)
-
     # Calculate weightings for game factors
-    home_factor = 1 + W_SCORE * (home_score - away_score) + W_XG * (home_xg - away_xg) + W_SHOTS * (home_shots - away_shots) + W_CORNERS * (home_corners - away_corners) + W_PK_GOAL * (home_pk_goal - away_pk_goal) + W_PK_SHOTS * (home_pk_shots - away_pk_shots) + W_TOP * home_top
-    away_factor = 1 + W_SCORE * (away_score - home_score) + W_XG * (away_xg - home_xg) + W_SHOTS * (away_shots - home_shots) + W_CORNERS * (away_corners - home_corners) + W_PK_GOAL * (away_pk_goal - home_pk_goal) + W_PK_SHOTS * (away_pk_shots - home_pk_shots) + W_TOP * (1 - home_top)
+    home_factor = 1 + W_SCORE * (home_score - away_score) + W_XG * (home_xg - away_xg) + W_SHOTS * (home_shots - away_shots) + W_CORNERS * (home_corners - away_corners) + W_PK_GOAL * (home_pk_goal - away_pk_goal) + W_PK_SHOTS * (home_pk_shots - away_pk_shots) + W_TOP * (home_top-0.5)
+    away_factor = 1 + W_SCORE * (home_score - away_score) + W_XG * (home_xg - away_xg) + W_SHOTS * (home_shots - away_shots) + W_CORNERS * (home_corners - away_corners) + W_PK_GOAL * (home_pk_goal - away_pk_goal) + W_PK_SHOTS * (home_pk_shots - away_pk_shots) + W_TOP * (home_top-0.5)
 
     if home_result == 1:  # Home team wins
         home_score = 1
@@ -54,8 +55,16 @@ def update_ratings(home_rating, away_rating, home_result, home_score, away_score
     return home_new_rating, away_new_rating
 
 # Function to read match data from CSV file and update Elo ratings
-def update_elo_from_csv(csv_file):
+def update_elo_from_csv(csv_file, metadata_file):
     team_ratings = {}
+    
+
+    with open(metadata_file, 'r') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            team = row['Team_ID']
+            conference = row['conference']
+            team_conferences[team] = conference
 
     with open(csv_file, 'r') as file:
         reader = csv.DictReader(file)
@@ -77,9 +86,9 @@ def update_elo_from_csv(csv_file):
             away_score = int(row['AwayScore'])
 
             if home_team not in team_ratings:
-                team_ratings[home_team] = INITIAL_RATING
+                team_ratings[home_team] = INITIAL_RATING + (CONF_ADV if team_conferences[home_team] == "Eastern" else -CONF_ADV)
             if away_team not in team_ratings:
-                team_ratings[away_team] = INITIAL_RATING
+                team_ratings[away_team] = INITIAL_RATING + (CONF_ADV if team_conferences[away_team] == "Eastern" else -CONF_ADV)
             if home_team not in team_records:
                 team_records[home_team] = 0
             if away_team not in team_records:
@@ -110,6 +119,9 @@ def make_predictions(csv_file, team_ratings):
     correct_predictions = 0
     total_games = 0
 
+    easternRecord = 0
+    westernRecord = 0
+    drawRecord = 0
     with open(csv_file, 'r') as file:
         reader = csv.DictReader(file)
         for row in reader:
@@ -121,7 +133,7 @@ def make_predictions(csv_file, team_ratings):
             away_record = team_records[away_team]
             home_score = int(row['HomeScore'])
             away_score = int(row['AwayScore'])
-            print(f"{home_team} ({floor(home_rating)}) {home_score} - {away_score} ({floor(away_rating)}) {away_team}")
+            #print(f"{home_team} ({floor(home_rating)}) {home_score} - {away_score} ({floor(away_rating)}) {away_team}")
 
             # Predict the outcome based on Elo ratings
             K = 1000
@@ -133,14 +145,27 @@ def make_predictions(csv_file, team_ratings):
             if (home_score > away_score):
                 #correct_predictions += 1 if home_expected > 0.5 else 0
                 correct_predictions += home_expected
+                if (team_conferences[home_team] == "Eastern" and team_conferences[away_team] == "Western"):
+                     easternRecord += 1
+                if (team_conferences[home_team] == "Western" and team_conferences[away_team] == "Eastern"):
+                     westernRecord += 1
             if (home_score < away_score):
                 #correct_predictions += 0 if home_expected > 0.5 else 1
                 correct_predictions += 1-home_expected
+                if (team_conferences[away_team] == "Eastern" and team_conferences[home_team] == "Western"):
+                     easternRecord += 1
+                if (team_conferences[away_team] == "Western" and team_conferences[home_team] == "Eastern"):
+                     westernRecord += 1
             if (home_score == away_score):
                 #correct_predictions += 0.5
-                correct_predictions += 1 - (2 * abs(home_expected - 0.5))
+                correct_predictions += 1 - (4*abs(home_expected - 0.5)**2)
+                if (team_conferences[away_team] == "Eastern" and team_conferences[home_team] == "Western"):
+                     drawRecord += 1
+                if (team_conferences[away_team] == "Western" and team_conferences[home_team] == "Eastern"):
+                     drawRecord += 1
 
             total_games += 1
+    #print(f"East: {easternRecord}, Draw: {drawRecord}, West: {westernRecord}")
 
     return correct_predictions, total_games
 
@@ -153,12 +178,13 @@ def write_ratings_to_csv(ratings, output_file):
 
 def main():
     csv_file = "NSL_regular_season_data_2.csv"#input("Enter the path to the CSV file: ")
+    metadata_file = "NSL_Metadata.csv"#input("Enter the path to the CSV file: ")
     output_file = "NSL_elo.csv"#input("Enter the path to the output CSV file: ")
     try:
-        team_ratings = update_elo_from_csv(csv_file)
+        team_ratings = update_elo_from_csv(csv_file, metadata_file)
         correct_predictions, total_games = make_predictions(csv_file, team_ratings)
         write_ratings_to_csv(team_ratings, output_file)
-        print(f"Regular season games predicted correctly: {correct_predictions}/{total_games} ({100*correct_predictions/total_games}%)")
+        print(f"Regular season games predicted correctly, factor={W_SHOTS:.4f}: {correct_predictions:.9f}/{total_games} ({100*correct_predictions/total_games:.9f}%)")
     except FileNotFoundError:
         print("File not found.")
     except Exception as e:
